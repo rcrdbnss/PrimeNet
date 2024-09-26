@@ -1,4 +1,9 @@
 import os
+
+import pandas as pd
+
+import ists_utils
+
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
@@ -19,17 +24,19 @@ parser.add_argument('--niters', type=int, default=2000, help='Maximum number of 
 parser.add_argument('--lr', type=float, default=0.01, help='Learning Rate.')
 parser.add_argument('--rec-hidden', type=int, default=32, help='Model Hidden Size for Dense Layers.')
 parser.add_argument('--embed-time', type=int, default=128, help='Size of Time Embedding Layer.')
-parser.add_argument('--save', type=int, default=0, help='Non-zero: Save the finetuned model. Zero: Do not save the finetuned model.')
+parser.add_argument('--save', type=int, default=0,
+                    help='Non-zero: Save the finetuned model. Zero: Do not save the finetuned model.')
 parser.add_argument('--fname', type=str, default=None, help='Filename of pretrained checkpoint.')
 parser.add_argument('--seed', type=int, default=0, help='Setting Random Seed.')
 parser.add_argument('--split', type=int, default=0)
 parser.add_argument('--n', type=int, default=8000)
 parser.add_argument('--batch-size', type=int, default=50, help='Batch Size.')
-parser.add_argument('--quantization', type=float, default=0.1, 
+parser.add_argument('--quantization', type=float, default=0.1,
                     help="Quantization on the physionet dataset.")
-parser.add_argument('--classif', action='store_true', 
+parser.add_argument('--classif', action='store_true',
                     help="Include binary classification loss")
-parser.add_argument('--learn-emb', action='store_true', help='True: Use Learnable Time Embedding, linear layer for time embedding followed by sinusoidal activation. False: Fixed Positional Encoding.')
+parser.add_argument('--learn-emb', action='store_true',
+                    help='True: Use Learnable Time Embedding, linear layer for time embedding followed by sinusoidal activation. False: Fixed Positional Encoding.')
 parser.add_argument('--num-heads', type=int, default=1, help='Number of Attention Heads.')
 parser.add_argument('--freq', type=float, default=10., help='Positional Encoding Parameter.')
 parser.add_argument('--dataset', type=str, default='physionet', help='Name of the Dataset.')
@@ -37,37 +44,63 @@ parser.add_argument('--old-split', type=int, default=1)
 parser.add_argument('--nonormalize', action='store_true')
 parser.add_argument('--classify-pertp', action='store_true', help='Whether to do a per timestep classification.')
 
-parser.add_argument('--dev', type=str, default='0', help='GPU Device Number.')
-parser.add_argument('--task', type=str, default='classification', help='[classification, regression, interpolation]: Name of the Finetuning Task')
-parser.add_argument('--pooling', type=str, default='bert', help='[ave, att, bert]: What pooling to use to aggregate the model output sequence representation for different tasks.')
+parser.add_argument('--device', type=str, default='0', help='GPU Device Number.')
+parser.add_argument('--task', type=str, default='classification',
+                    help='[classification, regression, interpolation]: Name of the Finetuning Task')
+parser.add_argument('--pooling', type=str, default='bert',
+                    help='[ave, att, bert]: What pooling to use to aggregate the model output sequence representation for different tasks.')
 parser.add_argument('--pretrain_model', type=str, default='0.15', help='[full, full2, cl, interp, att, bert, 0.15]')
 parser.add_argument('--path', type=str, default='./data/finetune/', help='Base path where all datasets are located.')
+parser.add_argument('--dev', action='store_true', help='Run on development data')
+# ists args
+parser.add_argument('--subset', default='all')
+parser.add_argument('--num-past', type=int, default=None, help='Number of past values to consider')
+parser.add_argument('--num-fut', type=int, default=None, help='Number of future values to predict')
+parser.add_argument('--nan-pct', type=float, default=None, help='Percentage of NaN values to insert')
+parser.add_argument('--abl-code', type=str, default='ES')
 args = parser.parse_args()
 
-
 if __name__ == '__main__':
-    args.path = './data/finetune/'
+    if args.dev:
+        args.niters = 2
+        args.batch_size = 25
+    # args.path = './data/finetune/'
     all_mse_loss, all_mae_loss, best_mse_epochs = [], [], []
     all_best_auc, all_best_acc, all_lowest_loss_auc, all_lowest_loss_acc = [], [], [], []
 
-    experiment_id = int(SystemRandom().random()*100000)
-    # print(args, experiment_id)
     seed = args.seed
     torch.manual_seed(seed)
     np.random.seed(seed)
-    torch.cuda.manual_seed(seed)  
-    gpu_id = 'cuda:' + args.dev  
-    args.device = torch.device(#'cpu')
+    torch.cuda.manual_seed(seed)
+    gpu_id = 'cuda:' + args.device
+    args.device = torch.device(  
+        #'cpu')
         gpu_id if torch.cuda.is_available() else 'cpu')
-        
-    data_obj = utils.get_finetune_data(args)
+
+    if args.dataset in ['french', 'ushcn']:
+        dataset = args.dataset
+        subset = args.subset
+        num_past = args.num_past
+        num_fut = args.num_fut
+        nan_pct = args.nan_pct
+        abl_code = args.abl_code
+        if args.dev:
+            subset = f'{subset}_dev'
+        experiment_id = f"{dataset}_{subset}_nan{int(nan_pct * 10)}_np{num_past}_nf{num_fut}_s{seed}"
+        data_obj, D = ists_utils.get_finetune_data(None, dataset, subset, nan_pct, num_past, num_fut, abl_code, args)
+        args.pretrain_model = experiment_id
+
+    else:
+        experiment_id = int(SystemRandom().random() * 100000)
+        data_obj = utils.get_finetune_data(args)
+    print(args, experiment_id)
     train_loader = data_obj["train_dataloader"]
     test_loader = data_obj["test_dataloader"]
     val_loader = data_obj["val_dataloader"]
     dim = data_obj["input_dim"]
 
     # model
-    
+
     config = TimeBERTConfig(dataset=args.dataset,
                             input_dim=dim,
                             cls_query=torch.linspace(0, 1., 128),
@@ -81,7 +114,7 @@ if __name__ == '__main__':
                             max_length=512,
                             dropout=0.3,
                             temp=0.05)
-    
+
     if args.task == 'classification':
         model = TimeBERTForClassification(config).to(args.device)
     elif args.task == 'regression':
@@ -104,13 +137,13 @@ if __name__ == '__main__':
         criterion = nn.CrossEntropyLoss()
     elif args.task == 'regression' or args.task == 'interpolation':
         criterion = nn.MSELoss()
-    
+
     if args.fname is not None:
         checkpoint = torch.load(args.fname)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         print('loading saved weights', checkpoint['epoch'])
-    
+
     best_val_loss = float('inf')
     total_time = 0.
     best_mse_loss = float('inf')
@@ -131,10 +164,11 @@ if __name__ == '__main__':
         #avg_reconst, avg_kl, mse = 0, 0, 0
         start_time = time.time()
         for train_batch, label in train_loader:
+            label = label.squeeze()
             train_batch, label = train_batch.to(args.device), label.to(args.device)
-            batch_len  = train_batch.shape[0]
+            batch_len = train_batch.shape[0]
             observed_data, observed_mask, observed_tp \
-                = train_batch[:, :, :dim], train_batch[:, :, dim:2*dim], train_batch[:, :, -1]
+                = train_batch[:, :, :dim], train_batch[:, :, dim:2 * dim], train_batch[:, :, -1]
             out = model(torch.cat((observed_data, observed_mask), 2), observed_tp)
             if args.task == 'classification' and args.classify_pertp:
                 N = label.size(-1)
@@ -143,17 +177,19 @@ if __name__ == '__main__':
                 _, label = label.max(-1)
                 loss = criterion(out, label.long())
             else:
-                if args.task == 'classification': loss = criterion(out, label)
-                elif args.task == 'regression': loss = criterion(out[ : , 0], label)
+                if args.task == 'classification':
+                    loss = criterion(out, label)
+                elif args.task == 'regression':
+                    loss = criterion(out[:, 0], label)
                 elif args.task == 'interpolation':
-                    target_data, target_mask = label[:, :, :dim], label[:, :, dim:2*dim].bool()
+                    target_data, target_mask = label[:, :, :dim], label[:, :, dim:2 * dim].bool()
                     num_values = torch.sum(target_mask).item()
                     loss = criterion(out[target_mask], target_data[target_mask])
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+
             if args.task == 'classification':
                 train_loss += loss.item() * batch_len
                 train_acc += torch.mean((out.argmax(1) == label).float()).item() * batch_len
@@ -165,7 +201,6 @@ if __name__ == '__main__':
                 train_loss += loss.item() * num_values
                 total_values += num_values
         total_time += time.time() - start_time
-
 
         if args.task == 'classification':
             val_loss, val_acc, val_auc = utils.evaluate_classifier(model, val_loader, args=args, dim=dim)
@@ -181,47 +216,61 @@ if __name__ == '__main__':
             val_mse_loss, val_mae_loss = utils.evaluate_regressor(model, val_loader, args=args, dim=dim)
             test_mse_loss, test_mae_loss = utils.evaluate_regressor(model, test_loader, args=args, dim=dim)
             best_val_loss = min(best_val_loss, val_mse_loss)
+            results.append([train_loss / train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss])
+
+            print(
+                'Iter: {}, train_loss: {:.6f}, val_mse_loss: {:.6f}, val_mae_loss: {:.6f}, test_mse_loss: {:.6f}, test_mae_loss: {:.6f}'
+                .format(itr, train_loss / train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss), end='\r')
+
+            if test_mse_loss < best_mse_loss:
+                best_mse_loss = min(test_mse_loss, best_mse_loss)
+                best_mse_epoch = itr
+            best_mae_loss = min(test_mae_loss, best_mae_loss)
 
 
         elif args.task == 'interpolation':
             val_mse_loss, val_mae_loss = utils.evaluate_interpolator(model, val_loader, args=args, dim=dim)
             test_mse_loss, test_mae_loss = utils.evaluate_interpolator(model, test_loader, args=args, dim=dim)
             best_val_loss = min(best_val_loss, val_mse_loss)
-        
-        
-        if args.task == 'classification':
-            results.append([train_loss/train_n, train_acc/train_n, val_loss, val_acc, val_auc, test_loss, test_acc, test_auc])
 
-            print('Iter: {}, loss: {:.4f}, acc: {:.4f}, val_loss: {:.4f}, val_acc: {:.4f}, test_acc: {:.4f}, test_auc: {:.4f}'
-                .format(itr, train_loss/train_n, train_acc/train_n, val_loss, val_acc, test_acc, test_auc), end = '\r')
-            
+        if args.task == 'classification':
+            results.append(
+                [train_loss / train_n, train_acc / train_n, val_loss, val_acc, val_auc, test_loss, test_acc, test_auc])
+
+            print(
+                'Iter: {}, loss: {:.4f}, acc: {:.4f}, val_loss: {:.4f}, val_acc: {:.4f}, test_acc: {:.4f}, test_auc: {:.4f}'
+                .format(itr, train_loss / train_n, train_acc / train_n, val_loss, val_acc, test_acc, test_auc),
+                end='\r')
+
             best_acc = max(test_acc, best_acc)
             best_auc = max(test_auc, best_auc)
 
 
-        elif args.task == 'regression':
-            results.append([train_loss/train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss])
-
-            print('Iter: {}, train_loss: {:.6f}, val_mse_loss: {:.6f}, val_mae_loss: {:.6f}, test_mse_loss: {:.6f}, test_mae_loss: {:.6f}'
-                .format(itr, train_loss/train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss), end = '\r')
-            
-            if test_mse_loss < best_mse_loss:
-                best_mse_loss = min(test_mse_loss, best_mse_loss)
-                best_mse_epoch = itr
-            best_mae_loss = min(test_mae_loss, best_mae_loss)
+        # elif args.task == 'regression':
+        #     results.append([train_loss / train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss])
+        #
+        #     print(
+        #         'Iter: {}, train_loss: {:.6f}, val_mse_loss: {:.6f}, val_mae_loss: {:.6f}, test_mse_loss: {:.6f}, test_mae_loss: {:.6f}'
+        #         .format(itr, train_loss / train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss), end='\r')
+        #
+        #     if test_mse_loss < best_mse_loss:
+        #         best_mse_loss = min(test_mse_loss, best_mse_loss)
+        #         best_mse_epoch = itr
+        #     best_mae_loss = min(test_mae_loss, best_mae_loss)
 
 
         elif args.task == 'interpolation':
-            results.append([train_loss/total_values, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss])
+            results.append([train_loss / total_values, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss])
 
-            print('Iter: {}, train_loss: {:.6f}, val_mse_loss: {:.6f}, val_mae_loss: {:.6f}, test_mse_loss: {:.6f}, test_mae_loss: {:.6f}'
-                .format(itr, train_loss/total_values, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss), end = '\r')
-            
+            print(
+                'Iter: {}, train_loss: {:.6f}, val_mse_loss: {:.6f}, val_mae_loss: {:.6f}, test_mse_loss: {:.6f}, test_mae_loss: {:.6f}'
+                .format(itr, train_loss / total_values, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss),
+                end='\r')
+
             if test_mse_loss < best_mse_loss:
                 best_mse_loss = min(test_mse_loss, best_mse_loss)
                 best_mse_epoch = itr
             best_mae_loss = min(test_mae_loss, best_mae_loss)
-        
 
         if itr % 100 == 0 and args.save:
             torch.save({
@@ -231,7 +280,6 @@ if __name__ == '__main__':
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': -loss,
             }, 'models/' + args.pretrain_model + '_finetuned.h5')
-    
 
     if args.task == 'classification':
         print('Best ACC:', best_acc)
@@ -254,38 +302,59 @@ if __name__ == '__main__':
 
         best_mse_epochs.append(best_mse_epoch)
 
-
+    results = np.array(results)
     results_path = 'results/' + args.pretrain_model + '_finetuned.npy'
     with open(results_path, 'wb') as f:
-        np.save(f, np.array(results))
-        
+        np.save(f, results)
 
-if args.task == 'classification':
-    all_best_acc_round = [round(num, 3) for num in all_best_acc]
-    print('Best Accuracy: ' + str(all_best_acc_round))
+    if args.task == 'classification':
+        all_best_acc_round = [round(num, 3) for num in all_best_acc]
+        print('Best Accuracy: ' + str(all_best_acc_round))
 
-    all_best_auc_round = [round(num, 3) for num in all_best_auc]
-    print('Best AUC: ' + str(all_best_auc_round))
+        all_best_auc_round = [round(num, 3) for num in all_best_auc]
+        print('Best AUC: ' + str(all_best_auc_round))
 
-    all_lowest_loss_acc_round = [round(num, 3) for num in all_lowest_loss_acc]
-    print('Lowest Loss Accuracy: ' + str(all_lowest_loss_acc_round))
+        all_lowest_loss_acc_round = [round(num, 3) for num in all_lowest_loss_acc]
+        print('Lowest Loss Accuracy: ' + str(all_lowest_loss_acc_round))
 
-    all_lowest_loss_auc_round = [round(num, 3) for num in all_lowest_loss_auc]
-    print('Lowest Loss AUC: ' + str(all_lowest_loss_auc_round))
+        all_lowest_loss_auc_round = [round(num, 3) for num in all_lowest_loss_auc]
+        print('Lowest Loss AUC: ' + str(all_lowest_loss_auc_round))
 
-    print('Mean Best Acc, Std Best Acc: ' + str(np.mean(all_best_acc)) + ', ' + str(np.std(all_best_acc)))
-    print('Mean Best Auc, Std Best Auc: ' + str(np.mean(all_best_auc)) + ', ' + str(np.std(all_best_auc)))
+        print('Mean Best Acc, Std Best Acc: ' + str(np.mean(all_best_acc)) + ', ' + str(np.std(all_best_acc)))
+        print('Mean Best Auc, Std Best Auc: ' + str(np.mean(all_best_auc)) + ', ' + str(np.std(all_best_auc)))
 
-    print('Mean Lowest Loss Acc, Std Lowest Loss Acc: ' + str(np.mean(all_lowest_loss_acc)) + ', ' + str(np.std(all_lowest_loss_acc)))
-    print('Mean Lowest Loss Auc, Std Lowest Loss Auc: ' + str(np.mean(all_lowest_loss_auc)) + ', ' + str(np.std(all_lowest_loss_auc)))
+        print('Mean Lowest Loss Acc, Std Lowest Loss Acc: ' + str(np.mean(all_lowest_loss_acc)) + ', ' + str(
+            np.std(all_lowest_loss_acc)))
+        print('Mean Lowest Loss Auc, Std Lowest Loss Auc: ' + str(np.mean(all_lowest_loss_auc)) + ', ' + str(
+            np.std(all_lowest_loss_auc)))
 
 
-elif args.task == 'regression' or args.task == 'interpolation':
-    all_rmse_loss = [math.sqrt(num) for num in all_mse_loss]
-    print('MSE Loss: ' + str(all_mse_loss))
-    print('MAE Loss: ' + str(all_mae_loss))
+    elif args.task == 'regression' or args.task == 'interpolation':
+        all_rmse_loss = [math.sqrt(num) for num in all_mse_loss]
+        print('MSE Loss: ' + str(all_mse_loss))
+        print('MAE Loss: ' + str(all_mae_loss))
 
-    print('Best MSE epochs: ' + str(best_mse_epochs))
-    print('Mean MSE Loss, Std MSE Loss: ' + str(np.mean(all_mse_loss)) + ', ' + str(np.std(all_mse_loss)))
-    print('Mean RMSE Loss, Std RMSE Loss: ' + str(np.mean(all_rmse_loss)) + ', ' + str(np.std(all_rmse_loss)))
-    print('Mean MAE Loss, Std MAE Loss: ' + str(np.mean(all_mae_loss)) + ', ' + str(np.std(all_mae_loss)))
+        print('Best MSE epochs: ' + str(best_mse_epochs))
+        print('Mean MSE Loss, Std MSE Loss: ' + str(np.mean(all_mse_loss)) + ', ' + str(np.std(all_mse_loss)))
+        print('Mean RMSE Loss, Std RMSE Loss: ' + str(np.mean(all_rmse_loss)) + ', ' + str(np.std(all_rmse_loss)))
+        print('Mean MAE Loss, Std MAE Loss: ' + str(np.mean(all_mae_loss)) + ', ' + str(np.std(all_mae_loss)))
+
+    if args.dataset in ['french', 'ushcn']:
+        scalers = D['scalers']
+        mse_test, mae_test = ists_utils.evaluate_raw(test_loader, D['id_array_test'], args.device, model, dim, scalers)
+        mse_train, mae_train = ists_utils.evaluate_raw(train_loader, D['id_array_train'], args.device, model, dim, scalers)
+
+        print('mse:', mse_test, 'mae:', mae_test)
+
+        results_path = f'results/{experiment_id}.csv'
+        results_df = dict()
+        if os.path.exists(results_path):
+            results_df = pd.read_csv(results_path, index_col=0).to_dict(orient='index')
+        results_df[f'{abl_code}'] = {
+            'test_mae': mae_test, 'test_mse': mse_test,
+            'train_mae': mae_train, 'train_mse': mse_train,
+            'val_loss': results[:, 1].tolist(), 'test_loss': results[:, 3].tolist()
+        }
+        results_df = pd.DataFrame.from_dict(results_df, orient='index')
+        results_df.index.name = experiment_id
+        results_df.to_csv(results_path)

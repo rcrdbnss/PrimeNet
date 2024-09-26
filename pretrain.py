@@ -1,4 +1,7 @@
 import os
+
+import ists_utils
+
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
@@ -19,36 +22,48 @@ parser.add_argument('--rec-hidden', type=int, default=32, help='Model Hidden Siz
 parser.add_argument('--embed-time', type=int, default=128, help='Size of Time Embedding Layer.')
 parser.add_argument('--save', type=int, default=1)
 parser.add_argument('--enc', type=str, default='mtan_enc')
-parser.add_argument('--fname', type=str, default=None, help='Filename of pretrained checkpoint that may be loaded for further pretraining, if training stopped midway.')
+parser.add_argument('--fname', type=str, default=None,
+                    help='Filename of pretrained checkpoint that may be loaded for further pretraining, if training stopped midway.')
 parser.add_argument('--seed', type=int, default=0, help='Setting Random Seed.')
 parser.add_argument('--split', type=int, default=0)
 parser.add_argument('--n', type=int, default=8000)
 parser.add_argument('--batch-size', type=int, default=50, help='Batch Size.')
-parser.add_argument('--quantization', type=float, default=0.1, 
+parser.add_argument('--quantization', type=float, default=0.1,
                     help='Quantization on the physionet dataset.')
-parser.add_argument('--classif', action='store_true', 
+parser.add_argument('--classif', action='store_true',
                     help='Include binary classification loss')
-parser.add_argument('--learn-emb', action='store_true', help='True: Use Learnable Time Embedding, linear layer for time embedding followed by sinusoidal activation. False: Fixed Positional Encoding.')
+parser.add_argument('--learn-emb', action='store_true',
+                    help='True: Use Learnable Time Embedding, linear layer for time embedding followed by sinusoidal activation. False: Fixed Positional Encoding.')
 parser.add_argument('--num-heads', type=int, default=1, help='Number of Attention Heads.')
 parser.add_argument('--freq', type=float, default=10., help='Positional Encoding Parameter.')
 parser.add_argument('--dataset', type=str, default='physionet', help='Name of the Dataset.')
 parser.add_argument('--old-split', type=int, default=1)
 parser.add_argument('--nonormalize', action='store_true')
 parser.add_argument('--classify-pertp', action='store_true')
-parser.add_argument('--dev', type=str, default='0', help='GPU Device Number.')
+parser.add_argument('--device', type=str, default='0', help='GPU Device Number.')
 parser.add_argument('--add_pos', action='store_true')
 parser.add_argument('--transformer', action='store_true')
-parser.add_argument('--pooling', type=str, default='bert', help='[ave, att, bert]: What pooling to use to aggregate the model output sequence representation for different tasks.')
+parser.add_argument('--pooling', type=str, default='bert',
+                    help='[ave, att, bert]: What pooling to use to aggregate the model output sequence representation for different tasks.')
 parser.add_argument('--path', type=str, default='./data/pretrain/', help='Base path where all datasets are located.')
 # parser.add_argument('--training', type=str, default='pretrain')
-parser.add_argument('--pretrain_tasks', type=str, default='full2', help='[full, cl, interp, full2]: cl will only pretrain using TimeCL. interp will only pretrain using TimeReco. full2 will pretrain using both TimeCL and TimeReco.')
-parser.add_argument('--patience', type=int, default=20, help='Early Stopping Criterion: How may iterations to wait for the validation accuracy at current epoch to exceed the best validation accuracy so far before early stopping training. Accuracy refers to Contrastive Learning Accuracy')
-parser.add_argument('--segment_num', type=int, default=3, help='number of time interval segment to mask, default: 3 time intervals')
-parser.add_argument('--mask_ratio_per_seg', type=float, default=0.05, help='fraction of the sequence length to mask for each time interval, deafult: 0.05 * seq_len to be masked for each of the time interval')
+parser.add_argument('--pretrain_tasks', type=str, default='full2',
+                    help='[full, cl, interp, full2]: cl will only pretrain using TimeCL. interp will only pretrain using TimeReco. full2 will pretrain using both TimeCL and TimeReco.')
+parser.add_argument('--patience', type=int, default=20,
+                    help='Early Stopping Criterion: How may iterations to wait for the validation accuracy at current epoch to exceed the best validation accuracy so far before early stopping training. Accuracy refers to Contrastive Learning Accuracy')
+parser.add_argument('--segment_num', type=int, default=3,
+                    help='number of time interval segment to mask, default: 3 time intervals')
+parser.add_argument('--mask_ratio_per_seg', type=float, default=0.05,
+                    help='fraction of the sequence length to mask for each time interval, deafult: 0.05 * seq_len to be masked for each of the time interval')
 # parser.add_argument('--variable_name', type=str, default='segment_num', help='[pretrain_tasks, pooling, segment_num, mask_ratio_per_seg, lr]')
-
+parser.add_argument('--dev', action='store_true', help='Run on development data')
+# ists args
+parser.add_argument('--subset', default='all')
+parser.add_argument('--num-past', type=int, default=None, help='Number of past values to consider')
+parser.add_argument('--num-fut', type=int, default=None, help='Number of future values to predict')
+parser.add_argument('--nan-pct', type=float, default=None, help='Percentage of NaN values to insert')
+parser.add_argument('--abl-code', type=str, default='ES')
 args = parser.parse_args()
-
 
 
 def train(args, model, train_loader, optimizer):
@@ -59,14 +74,13 @@ def train(args, model, train_loader, optimizer):
     correct_list = []
     total_list = []
     for train_batch in train_loader:
-
         value_batch = train_batch['value'].to(args.device)
         time_batch = train_batch['time'].to(args.device)
         mask_batch = train_batch['mask'].to(args.device)
 
         # print(value_batch.shape, time_batch.shape, mask_batch.shape)
         x_batch = torch.cat([value_batch, mask_batch], dim=-1)
-        
+
         out = model(x_batch, time_batch)
 
         cl_loss_list.append(out['cl_loss'])
@@ -75,17 +89,16 @@ def train(args, model, train_loader, optimizer):
         total_list.append(out['total_num'])
 
         loss = out['loss']
-        
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-    acc = sum(correct_list)/sum(total_list)
-    cl_loss = sum(cl_loss_list)/len(cl_loss_list)
-    mse_loss = sum(mse_loss_list)/len(mse_loss_list)
+    acc = sum(correct_list) / sum(total_list)
+    cl_loss = sum(cl_loss_list) / len(cl_loss_list)
+    mse_loss = sum(mse_loss_list) / len(mse_loss_list)
 
     return cl_loss, mse_loss, acc
-
 
 
 def eval(args, model, eval_loader):
@@ -98,13 +111,12 @@ def eval(args, model, eval_loader):
 
     with torch.no_grad():
         for train_batch in eval_loader:
-
             value_batch = train_batch['value'].to(args.device)
             time_batch = train_batch['time'].to(args.device)
             mask_batch = train_batch['mask'].to(args.device)
 
             x_batch = torch.cat([value_batch, mask_batch], dim=-1)
-            
+
             out = model(x_batch, time_batch)
 
             cl_loss_list.append(out['cl_loss'])
@@ -112,24 +124,25 @@ def eval(args, model, eval_loader):
             correct_list.append(out['correct_num'])
             total_list.append(out['total_num'])
 
-    acc = sum(correct_list)/sum(total_list)
-    cl_loss = sum(cl_loss_list)/len(cl_loss_list)
-    mse_loss = sum(mse_loss_list)/len(mse_loss_list)
+    acc = sum(correct_list) / sum(total_list)
+    cl_loss = sum(cl_loss_list) / len(cl_loss_list)
+    mse_loss = sum(mse_loss_list) / len(mse_loss_list)
 
     return cl_loss, mse_loss, acc
 
 
-
 if __name__ == '__main__':
-    args.path = './data/pretrain/'
-    experiment_id = int(SystemRandom().random()*100000)
-    print(args, experiment_id)
+    if args.dev:
+        args.niters = 2
+        args.batch_size = 25
+    # args.path = './data/pretrain/'
     seed = args.seed
     torch.manual_seed(seed)
     np.random.seed(seed)
-    torch.cuda.manual_seed(seed)  
-    gpu_id = 'cuda:' + args.dev  
-    args.device = torch.device(#'cpu')
+    torch.cuda.manual_seed(seed)
+    gpu_id = 'cuda:' + args.device
+    args.device = torch.device(
+        # 'cpu')
         gpu_id if torch.cuda.is_available() else 'cpu')
 
     '''
@@ -140,7 +153,21 @@ if __name__ == '__main__':
     elif args.variable_name == 'lr': args.variable_value = str(args.lr)
     '''
 
-    data_obj = utils.get_unlabeled_pretrain_data(args)
+    if args.dataset in ['french', 'ushcn']:
+        dataset = args.dataset
+        subset = args.subset
+        num_past = args.num_past
+        num_fut = args.num_fut
+        nan_pct = args.nan_pct
+        abl_code = args.abl_code
+        if args.dev:
+            subset = f'{subset}_dev'
+        experiment_id = f"{dataset}_{subset}_nan{int(nan_pct * 10)}_np{num_past}_nf{num_fut}_s{seed}"
+        data_obj = ists_utils.get_pretrain_data(None, dataset, subset, nan_pct, num_past, num_fut, abl_code, args)
+    else:
+        experiment_id = int(SystemRandom().random()*100000)
+        data_obj = utils.get_unlabeled_pretrain_data(args)
+    print(args, experiment_id)
     train_loader = data_obj["train_dataloader"]
     val_loader = data_obj["val_dataloader"]
     dim = data_obj["input_dim"]
@@ -168,7 +195,7 @@ if __name__ == '__main__':
     params = (list(model.parameters()))
     print('parameters:', utils.count_parameters(model))
     optimizer = optim.Adam(params, lr=args.lr)
-    
+
     if args.fname is not None:
         checkpoint = torch.load(args.fname)
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -193,19 +220,21 @@ if __name__ == '__main__':
                     'model_state_dict': model.bert.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                 }, 'models/' + str(experiment_id) +
-                    '.h5')
-                
+                   '.h5')
+
                 best_acc = val_acc
                 patience = args.patience
             else:
-                patience-=1
+                patience -= 1
                 if patience < 0:
                     break
 
-        results.append([train_cl_loss.item(), train_mse_loss.item(), train_acc, val_cl_loss.item(), val_mse_loss.item(), val_acc])
+        results.append(
+            [train_cl_loss.item(), train_mse_loss.item(), train_acc, val_cl_loss.item(), val_mse_loss.item(), val_acc])
 
-        sys.stdout.write('Iter: {}, train_cl_loss: {:.4f}, train_mse_loss: {:.4f}, train_acc: {:.4f}, dev_acc: {:.4f}, best_acc: {:.4f}\r'
-              .format(itr, train_cl_loss, train_mse_loss, train_acc, val_acc, best_acc))
+        sys.stdout.write(
+            'Iter: {}, train_cl_loss: {:.4f}, train_mse_loss: {:.4f}, train_acc: {:.4f}, dev_acc: {:.4f}, best_acc: {:.4f}\r'
+            .format(itr, train_cl_loss, train_mse_loss, train_acc, val_acc, best_acc))
         sys.stdout.flush()
 
     if args.pretrain_tasks == 'interp':
@@ -215,7 +244,7 @@ if __name__ == '__main__':
             'model_state_dict': model.bert.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
         }, 'models/' + str(experiment_id) +
-                    '.h5')
+           '.h5')
 
     print('Training complete!')
 

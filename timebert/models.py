@@ -669,6 +669,14 @@ class TimeBERTForRegression(nn.Module):
 
                                 nn.Linear(32768, 1))
 
+        elif self.config.dataset in ['french']:
+            self.regressor = nn.Sequential(
+                                nn.Linear(config.hidden_size, 300),
+                                nn.ReLU(),
+                                nn.Linear(300, 300),
+                                nn.ReLU(),
+                                nn.Linear(300, 1))
+
 
     def forward(self, x, time_steps):
 

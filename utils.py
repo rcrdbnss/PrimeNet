@@ -9,7 +9,6 @@ from sklearn import metrics
 from collator import CLDataCollator
 
 
-
 class TimeDataset(Dataset):
     def __init__(self, data):
         super().__init__()
@@ -21,21 +20,19 @@ class TimeDataset(Dataset):
 
     def __len__(self):
         return len(self.data)
+
     def __getitem__(self, index):
         return self.data[index]
-
 
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-
 def log_normal_pdf(x, mean, logvar, mask):
     const = torch.from_numpy(np.array([2. * np.pi])).float().to(x.device)
     const = torch.log(const)
     return -.5 * (const + logvar + (x - mean) ** 2. / torch.exp(logvar)) * mask
-
 
 
 def normal_kl(mu1, lv1, mu2, lv2):
@@ -48,12 +45,10 @@ def normal_kl(mu1, lv1, mu2, lv2):
     return kl
 
 
-
 def mean_squared_error(orig, pred, mask):
     error = (orig - pred) ** 2
     error = error * mask
     return error.sum() / mask.sum()
-
 
 
 def normalize_masked_data(data, mask, att_min, att_max):
@@ -72,7 +67,6 @@ def normalize_masked_data(data, mask, att_min, att_max):
     data_norm[mask == 0] = 0
 
     return data_norm, att_min, att_max
-
 
 
 def evaluate(dim, rec, dec, test_loader, args, num_sample=10, device="cuda"):
@@ -113,10 +107,9 @@ def evaluate(dim, rec, dec, test_loader, args, num_sample=10, device="cuda"):
     return mse / test_n
 
 
-
 def compute_losses(dim, dec_train_batch, qz0_mean, qz0_logvar, pred_x, args, device):
     observed_data, observed_mask \
-        = dec_train_batch[:, :, :dim], dec_train_batch[:, :, dim:2*dim]
+        = dec_train_batch[:, :, :dim], dec_train_batch[:, :, dim:2 * dim]
 
     noise_std = args.std  # default 0.1
     noise_std_ = torch.zeros(pred_x.size()).to(device) + noise_std
@@ -132,7 +125,6 @@ def compute_losses(dim, dec_train_batch, qz0_mean, qz0_logvar, pred_x, args, dev
     return logpx, analytic_kl
 
 
-
 def evaluate_classifier(model, test_loader, dec=None, args=None, classifier=None,
                         dim=0, reconst=False, num_sample=1):
     pred = []
@@ -142,13 +134,13 @@ def evaluate_classifier(model, test_loader, dec=None, args=None, classifier=None
         test_batch, label = test_batch.to(args.device), label.to(args.device)
         batch_len = test_batch.shape[0]
         observed_data, observed_mask, observed_tp \
-            = test_batch[:, :, :dim], test_batch[:, :, dim:2*dim], test_batch[:, :, -1]
+            = test_batch[:, :, :dim], test_batch[:, :, dim:2 * dim], test_batch[:, :, -1]
         with torch.no_grad():
             out = model(
                 torch.cat((observed_data, observed_mask), 2), observed_tp)
             if reconst:
                 qz0_mean, qz0_logvar = out[:, :,
-                                           :args.latent_dim], out[:, :, args.latent_dim:]
+                                       :args.latent_dim], out[:, :, args.latent_dim:]
                 epsilon = torch.randn(
                     num_sample, qz0_mean.shape[0], qz0_mean.shape[1], qz0_mean.shape[2]).to(args.device)
                 z0 = epsilon * torch.exp(.5 * qz0_logvar) + qz0_mean
@@ -156,7 +148,7 @@ def evaluate_classifier(model, test_loader, dec=None, args=None, classifier=None
                 if args.classify_pertp:
                     pred_x = dec(z0, observed_tp[None, :, :].repeat(
                         num_sample, 1, 1).view(-1, observed_tp.shape[1]))
-                    #pred_x = pred_x.view(num_sample, batch_len, pred_x.shape[1], pred_x.shape[2])
+                    # pred_x = pred_x.view(num_sample, batch_len, pred_x.shape[1], pred_x.shape[2])
                     out = classifier(pred_x)
                 else:
                     out = classifier(z0)
@@ -175,7 +167,7 @@ def evaluate_classifier(model, test_loader, dec=None, args=None, classifier=None
     pred = np.concatenate(pred, 0)
     true = np.concatenate(true, 0)
     acc = np.mean(pred.argmax(1) == true)
-    
+
     # print(true.shape)
     # print(pred.shape)
     # print(np.sum(pred, axis = 1))
@@ -185,53 +177,63 @@ def evaluate_classifier(model, test_loader, dec=None, args=None, classifier=None
     elif args.dataset == 'PersonActivity':
         auc = 0.
 
-    return test_loss/pred.shape[0], acc, auc
+    return test_loss / pred.shape[0], acc, auc
 
+
+def predict_regressor(model, test_loader, device, dim=0):
+    pred, true = [], []
+    for test_batch, label in test_loader:
+        label = label.squeeze()
+        test_batch, label = test_batch.to(device), label.to(device)
+        observed_data, observed_mask, observed_tp = test_batch[:, :, :dim], test_batch[:, :, dim:2 * dim], test_batch[:,
+                                                                                                           :, -1]
+        with torch.no_grad():
+            out = model(torch.cat((observed_data, observed_mask), 2), observed_tp)
+        pred.append(out.cpu().numpy())
+        true.append(label.cpu().numpy())
+    pred = np.concatenate(pred, 0)
+    true = np.concatenate(true, 0)
+    return pred, true
 
 
 def evaluate_regressor(model, test_loader, dec=None, args=None, classifier=None, dim=0):
-
     total_len = 0
     test_mse_loss = 0
     test_mae_loss = 0
     for test_batch, label in test_loader:
+        label = label.squeeze()
         test_batch, label = test_batch.to(args.device), label.to(args.device)
-        observed_data, observed_mask, observed_tp \
-            = test_batch[:, :, :dim], test_batch[:, :, dim:2*dim], test_batch[:, :, -1]
+        observed_data, observed_mask, observed_tp = test_batch[:, :, :dim], test_batch[:, :, dim:2 * dim], test_batch[:, :, -1]
         with torch.no_grad():
-            out = model(
-                torch.cat((observed_data, observed_mask), 2), observed_tp)
+            out = model(torch.cat((observed_data, observed_mask), 2), observed_tp)
             batch_len = test_batch.shape[0]
             total_len += batch_len
-            test_mse_loss += nn.MSELoss()(out[ : , 0], label).item() * batch_len
-            test_mae_loss += nn.L1Loss()(out[ : , 0], label).item() * batch_len
-            
-    return test_mse_loss/total_len, test_mae_loss/total_len
+            test_mse_loss += nn.MSELoss()(out[:, 0], label).item() * batch_len
+            test_mae_loss += nn.L1Loss()(out[:, 0], label).item() * batch_len
 
+    return test_mse_loss / total_len, test_mae_loss / total_len
 
 
 def evaluate_interpolator(model, test_loader, dec=None, args=None, classifier=None, dim=0):
-
     total_values = 0
     total_mse_loss = 0
     total_mae_loss = 0
-    
+
     for test_batch, label in test_loader:
         test_batch, label = test_batch.to(args.device), label.to(args.device)
         observed_data, observed_mask, observed_tp \
-            = test_batch[:, :, :dim], test_batch[:, :, dim:2*dim], test_batch[:, :, -1]
+            = test_batch[:, :, :dim], test_batch[:, :, dim:2 * dim], test_batch[:, :, -1]
         with torch.no_grad():
             out = model(
                 torch.cat((observed_data, observed_mask), 2), observed_tp)
-            
-            target_data, target_mask = label[:, :, :dim], label[:, :, dim:2*dim].bool()
+
+            target_data, target_mask = label[:, :, :dim], label[:, :, dim:2 * dim].bool()
             num_values = torch.sum(target_mask).item()
             total_mse_loss += nn.MSELoss()(out[target_mask], target_data[target_mask]).item() * num_values
             total_mae_loss += nn.L1Loss()(out[target_mask], target_data[target_mask]).item() * num_values
             total_values += num_values
 
-    return total_mse_loss / total_values, total_mae_loss/total_values
-
+    return total_mse_loss / total_values, total_mae_loss / total_values
 
 
 def subsample_timepoints(data, time_steps, mask, percentage_tp_to_sample=None):
@@ -254,26 +256,24 @@ def subsample_timepoints(data, time_steps, mask, percentage_tp_to_sample=None):
     return data, time_steps, mask
 
 
-
 def generate_irregular_samples(data, input_dim):
     combined_data = []
     max_len = 0
     for i in range(data.shape[0]):
-        zero_time_indices_list = torch.where(data[i, : , -1][1 : ] == 0)[0]
+        zero_time_indices_list = torch.where(data[i, :, -1][1:] == 0)[0]
         curr_len = zero_time_indices_list[0].item() + 1 if len(zero_time_indices_list) else data.shape[1]
         max_len = max(max_len, curr_len)
         values = data[i, :curr_len, : input_dim]
         times = data[i, :curr_len, -1]
-        mask =  data[i, :curr_len, input_dim : 2 * input_dim]
+        mask = data[i, :curr_len, input_dim: 2 * input_dim]
         single_data = [values, times, mask]
         combined_data.append(single_data)
     return combined_data, max_len
 
 
-
 def generate_batches(X_train, X_val, args):
     input_dim = (X_train.shape[2] - 1) // 2
-    
+
     X_train, train_max_len = generate_irregular_samples(X_train, input_dim)
     X_val, val_max_len = generate_irregular_samples(X_val, input_dim)
 
@@ -282,11 +282,13 @@ def generate_batches(X_train, X_val, args):
     pretrain_data = TimeDataset(X_train)
     val_data = TimeDataset(X_val)
 
-    train_cl_collator = CLDataCollator(max_len = max_len, args=args)
+    train_cl_collator = CLDataCollator(max_len=max_len, args=args)
 
     batch_size = min(min(len(val_data), args.batch_size), args.n)
-    train_dataloader = DataLoader(pretrain_data, batch_size = batch_size, shuffle = True, collate_fn = train_cl_collator, num_workers=8)
-    val_dataloader = DataLoader(val_data, batch_size = batch_size, shuffle = False, collate_fn = train_cl_collator, num_workers=8)
+    train_dataloader = DataLoader(pretrain_data, batch_size=batch_size, shuffle=True, collate_fn=train_cl_collator,
+                                  num_workers=8)
+    val_dataloader = DataLoader(val_data, batch_size=batch_size, shuffle=False, collate_fn=train_cl_collator,
+                                num_workers=8)
 
     data_objects = {"train_dataloader": train_dataloader,
                     "val_dataloader": val_dataloader,
@@ -299,7 +301,6 @@ def generate_batches(X_train, X_val, args):
     return data_objects
 
 
-
 def get_unlabeled_pretrain_data(args):
     X_train = torch.load(args.path + 'X_train.pt')
     X_val = torch.load(args.path + 'X_val.pt')
@@ -309,8 +310,6 @@ def get_unlabeled_pretrain_data(args):
     data_objects = generate_batches(X_train, X_val, args)
 
     return data_objects
-
-
 
 
 def get_finetune_data(args):
