@@ -26,7 +26,7 @@ parser.add_argument('--fname', type=str, default=None,
                     help='Filename of pretrained checkpoint that may be loaded for further pretraining, if training stopped midway.')
 parser.add_argument('--seed', type=int, default=0, help='Setting Random Seed.')
 parser.add_argument('--split', type=int, default=0)
-parser.add_argument('--n', type=int, default=8000)
+parser.add_argument('--n', type=int, default=999999999)
 parser.add_argument('--batch-size', type=int, default=50, help='Batch Size.')
 parser.add_argument('--quantization', type=float, default=0.1,
                     help='Quantization on the physionet dataset.')

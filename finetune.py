@@ -24,19 +24,17 @@ parser.add_argument('--niters', type=int, default=2000, help='Maximum number of 
 parser.add_argument('--lr', type=float, default=0.01, help='Learning Rate.')
 parser.add_argument('--rec-hidden', type=int, default=32, help='Model Hidden Size for Dense Layers.')
 parser.add_argument('--embed-time', type=int, default=128, help='Size of Time Embedding Layer.')
-parser.add_argument('--save', type=int, default=0,
-                    help='Non-zero: Save the finetuned model. Zero: Do not save the finetuned model.')
+parser.add_argument('--save', type=int, default=0, help='Non-zero: Save the finetuned model. Zero: Do not save the finetuned model.')
 parser.add_argument('--fname', type=str, default=None, help='Filename of pretrained checkpoint.')
 parser.add_argument('--seed', type=int, default=0, help='Setting Random Seed.')
 parser.add_argument('--split', type=int, default=0)
-parser.add_argument('--n', type=int, default=8000)
+parser.add_argument('--n', type=int, default=999999999)
 parser.add_argument('--batch-size', type=int, default=50, help='Batch Size.')
-parser.add_argument('--quantization', type=float, default=0.1,
+parser.add_argument('--quantization', type=float, default=0.1, 
                     help="Quantization on the physionet dataset.")
-parser.add_argument('--classif', action='store_true',
+parser.add_argument('--classif', action='store_true', 
                     help="Include binary classification loss")
-parser.add_argument('--learn-emb', action='store_true',
-                    help='True: Use Learnable Time Embedding, linear layer for time embedding followed by sinusoidal activation. False: Fixed Positional Encoding.')
+parser.add_argument('--learn-emb', action='store_true', help='True: Use Learnable Time Embedding, linear layer for time embedding followed by sinusoidal activation. False: Fixed Positional Encoding.')
 parser.add_argument('--num-heads', type=int, default=1, help='Number of Attention Heads.')
 parser.add_argument('--freq', type=float, default=10., help='Positional Encoding Parameter.')
 parser.add_argument('--dataset', type=str, default='physionet', help='Name of the Dataset.')
@@ -45,11 +43,11 @@ parser.add_argument('--nonormalize', action='store_true')
 parser.add_argument('--classify-pertp', action='store_true', help='Whether to do a per timestep classification.')
 
 parser.add_argument('--device', type=str, default='0', help='GPU Device Number.')
-parser.add_argument('--task', type=str, default='classification',
-                    help='[classification, regression, interpolation]: Name of the Finetuning Task')
-parser.add_argument('--pooling', type=str, default='bert',
-                    help='[ave, att, bert]: What pooling to use to aggregate the model output sequence representation for different tasks.')
-parser.add_argument('--pretrain_model', type=str, default='0.15', help='[full, full2, cl, interp, att, bert, 0.15]')
+parser.add_argument('--task', type=str, default='classification', help='[classification, regression, interpolation]: Name of the Finetuning Task')
+parser.add_argument('--pooling', type=str, default='bert', help='[ave, att, bert]: What pooling to use to aggregate the model output sequence representation for different tasks.')
+parser.add_argument('--pretrain-model', type=str, default=None, help='[full, full2, cl, interp, att, bert, 0.15]')
+parser.add_argument('--patience', type=int, default=20,
+                    help='Early Stopping Criterion: How may iterations to wait for the validation accuracy at current epoch to exceed the best validation accuracy so far before early stopping training. Accuracy refers to Contrastive Learning Accuracy')
 parser.add_argument('--path', type=str, default='./data/finetune/', help='Base path where all datasets are located.')
 parser.add_argument('--dev', action='store_true', help='Run on development data')
 # ists args
@@ -59,6 +57,7 @@ parser.add_argument('--num-fut', type=int, default=None, help='Number of future 
 parser.add_argument('--nan-pct', type=float, default=None, help='Percentage of NaN values to insert')
 parser.add_argument('--abl-code', type=str, default='ES')
 args = parser.parse_args()
+
 
 if __name__ == '__main__':
     if args.dev:
@@ -73,7 +72,7 @@ if __name__ == '__main__':
     np.random.seed(seed)
     torch.cuda.manual_seed(seed)
     gpu_id = 'cuda:' + args.device
-    args.device = torch.device(  
+    args.device = torch.device(
         #'cpu')
         gpu_id if torch.cuda.is_available() else 'cpu')
 
@@ -88,11 +87,13 @@ if __name__ == '__main__':
             subset = f'{subset}_dev'
         experiment_id = f"{dataset}_{subset}_nan{int(nan_pct * 10)}_np{num_past}_nf{num_fut}_s{seed}"
         data_obj, D = ists_utils.get_finetune_data(None, dataset, subset, nan_pct, num_past, num_fut, abl_code, args)
-        args.pretrain_model = experiment_id
+        if args.pretrain_model is not None:
+            args.pretrain_model = experiment_id
 
     else:
         experiment_id = int(SystemRandom().random() * 100000)
         data_obj = utils.get_finetune_data(args)
+    
     print(args, experiment_id)
     train_loader = data_obj["train_dataloader"]
     test_loader = data_obj["test_dataloader"]
@@ -128,6 +129,7 @@ if __name__ == '__main__':
         print('Load successfully.')
     else:
         print('Model training from scratch')
+        experiment_id += '_scratch'
 
     params = (list(model.parameters()))
     print('parameters:', utils.count_parameters(model))
@@ -150,6 +152,7 @@ if __name__ == '__main__':
     best_mae_loss = float('inf')
     best_mse_epoch = 0
     results = []
+    patience = args.patience
 
     best_acc = 0.
     best_auc = 0.
@@ -211,22 +214,24 @@ if __name__ == '__main__':
                 lowest_loss_acc = test_acc
                 lowest_loss_auc = test_auc
 
-
         elif args.task == 'regression':
             val_mse_loss, val_mae_loss = utils.evaluate_regressor(model, val_loader, args=args, dim=dim)
             test_mse_loss, test_mae_loss = utils.evaluate_regressor(model, test_loader, args=args, dim=dim)
-            best_val_loss = min(best_val_loss, val_mse_loss)
-            results.append([train_loss / train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss])
-
-            print(
-                'Iter: {}, train_loss: {:.6f}, val_mse_loss: {:.6f}, val_mae_loss: {:.6f}, test_mse_loss: {:.6f}, test_mae_loss: {:.6f}'
-                .format(itr, train_loss / train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss), end='\r')
-
-            if test_mse_loss < best_mse_loss:
-                best_mse_loss = min(test_mse_loss, best_mse_loss)
+            if val_mse_loss < best_val_loss:
+                best_val_loss = val_mse_loss
                 best_mse_epoch = itr
-            best_mae_loss = min(test_mae_loss, best_mae_loss)
-
+                torch.save({
+                    'args': args,
+                    'epoch': itr,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': -loss,
+                }, 'models/' + experiment_id + '_finetuned.h5')
+                patience = args.patience
+            else:
+                patience -= 1
+                if patience == 0:
+                    break
 
         elif args.task == 'interpolation':
             val_mse_loss, val_mae_loss = utils.evaluate_interpolator(model, val_loader, args=args, dim=dim)
@@ -239,47 +244,38 @@ if __name__ == '__main__':
 
             print(
                 'Iter: {}, loss: {:.4f}, acc: {:.4f}, val_loss: {:.4f}, val_acc: {:.4f}, test_acc: {:.4f}, test_auc: {:.4f}'
-                .format(itr, train_loss / train_n, train_acc / train_n, val_loss, val_acc, test_acc, test_auc),
-                end='\r')
+                .format(itr, train_loss / train_n, train_acc / train_n, val_loss, val_acc, test_acc, test_auc))
 
             best_acc = max(test_acc, best_acc)
             best_auc = max(test_auc, best_auc)
 
-
-        # elif args.task == 'regression':
-        #     results.append([train_loss / train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss])
-        #
-        #     print(
-        #         'Iter: {}, train_loss: {:.6f}, val_mse_loss: {:.6f}, val_mae_loss: {:.6f}, test_mse_loss: {:.6f}, test_mae_loss: {:.6f}'
-        #         .format(itr, train_loss / train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss), end='\r')
-        #
-        #     if test_mse_loss < best_mse_loss:
-        #         best_mse_loss = min(test_mse_loss, best_mse_loss)
-        #         best_mse_epoch = itr
-        #     best_mae_loss = min(test_mae_loss, best_mae_loss)
-
+        elif args.task == 'regression':
+            results.append([train_loss / train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss])
+        
+            print(
+                'Iter: {}, train_loss: {:.6f}, val_mse_loss: {:.6f}, val_mae_loss: {:.6f}, test_mse_loss: {:.6f}, test_mae_loss: {:.6f}'
+                .format(itr, train_loss / train_n, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss), end='\r')
+        
+            # if test_mse_loss < best_mse_loss:
+            best_mse_loss = min(test_mse_loss, best_mse_loss)
+                # best_mse_epoch = itr
+            best_mae_loss = min(test_mae_loss, best_mae_loss)
 
         elif args.task == 'interpolation':
             results.append([train_loss / total_values, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss])
 
             print(
                 'Iter: {}, train_loss: {:.6f}, val_mse_loss: {:.6f}, val_mae_loss: {:.6f}, test_mse_loss: {:.6f}, test_mae_loss: {:.6f}'
-                .format(itr, train_loss / total_values, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss),
-                end='\r')
+                .format(itr, train_loss / total_values, val_mse_loss, val_mae_loss, test_mse_loss, test_mae_loss))
 
             if test_mse_loss < best_mse_loss:
                 best_mse_loss = min(test_mse_loss, best_mse_loss)
                 best_mse_epoch = itr
             best_mae_loss = min(test_mae_loss, best_mae_loss)
 
-        if itr % 100 == 0 and args.save:
-            torch.save({
-                'args': args,
-                'epoch': itr,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': -loss,
-            }, 'models/' + args.pretrain_model + '_finetuned.h5')
+    checkpoint = torch.load('models/' + experiment_id + '_finetuned.h5')
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     if args.task == 'classification':
         print('Best ACC:', best_acc)
@@ -292,7 +288,6 @@ if __name__ == '__main__':
         all_lowest_loss_acc.append(lowest_loss_acc)
         all_lowest_loss_auc.append(lowest_loss_auc)
 
-
     elif args.task == 'regression' or args.task == 'interpolation':
         print('Best MSE Loss:', best_mse_loss)
         print('Best MAE Loss:', best_mae_loss)
@@ -303,7 +298,7 @@ if __name__ == '__main__':
         best_mse_epochs.append(best_mse_epoch)
 
     results = np.array(results)
-    results_path = 'results/' + args.pretrain_model + '_finetuned.npy'
+    results_path = 'results/' + experiment_id + '_finetuned.npy'
     with open(results_path, 'wb') as f:
         np.save(f, results)
 
@@ -350,7 +345,7 @@ if __name__ == '__main__':
         results_df = dict()
         if os.path.exists(results_path):
             results_df = pd.read_csv(results_path, index_col=0).to_dict(orient='index')
-        results_df[f'{abl_code}'] = {
+        results_df[f'{abl_code}' + '#scratch' if args.pretrain_model is None else ''] = {
             'test_mae': mae_test, 'test_mse': mse_test,
             'train_mae': mae_train, 'train_mse': mse_train,
             'val_loss': results[:, 1].tolist(), 'test_loss': results[:, 3].tolist()

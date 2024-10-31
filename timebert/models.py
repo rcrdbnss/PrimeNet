@@ -669,7 +669,7 @@ class TimeBERTForRegression(nn.Module):
 
                                 nn.Linear(32768, 1))
 
-        elif self.config.dataset in ['french']:
+        elif self.config.dataset in ['french', 'ushcn']:
             self.regressor = nn.Sequential(
                                 nn.Linear(config.hidden_size, 300),
                                 nn.ReLU(),
