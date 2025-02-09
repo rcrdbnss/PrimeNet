@@ -274,7 +274,7 @@ if __name__ == '__main__':
                 best_mse_epoch = itr
             best_mae_loss = min(test_mae_loss, best_mae_loss)
 
-    checkpoint = torch.load('models/' + experiment_id + '_finetuned.h5')
+    checkpoint = torch.load('models/' + experiment_id + '_finetuned.h5', weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
