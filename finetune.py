@@ -74,8 +74,9 @@ if __name__ == '__main__':
     torch.cuda.manual_seed(seed)
     gpu_id = 'cuda:' + args.device
     args.device = torch.device(
-        #'cpu')
-        gpu_id if torch.cuda.is_available() else 'cpu')
+        #'cpu'
+        gpu_id if torch.cuda.is_available() else 'cpu'
+    )
 
     if args.dataset in ['french', 'ushcn']:
         dataset = args.dataset
