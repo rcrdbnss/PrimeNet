@@ -17,7 +17,7 @@ from timebert import TimeBERTForPretraining, TimeBERTConfig, TimeBERTForPretrain
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--niters', type=int, default=2000, help='Maximum number of iterations to run.')
-parser.add_argument('--lr', type=float, default=0.01, help='Learning Rate.')
+parser.add_argument('--lr', type=float, default=0.0001, help='Learning Rate.')
 parser.add_argument('--rec-hidden', type=int, default=32, help='Model Hidden Size for Dense Layers.')
 parser.add_argument('--embed-time', type=int, default=128, help='Size of Time Embedding Layer.')
 parser.add_argument('--save', type=int, default=1)
@@ -133,7 +133,8 @@ def eval(args, model, eval_loader):
 
 if __name__ == '__main__':
     if args.dev:
-        args.niters = 2
+        args.niters = 3
+        args.patience = 1
         args.batch_size = 25
     # args.path = './data/pretrain/'
     seed = args.seed
@@ -162,7 +163,7 @@ if __name__ == '__main__':
         abl_code = args.abl_code
         if args.dev:
             subset = f'{subset}_dev'
-        experiment_id = f"{dataset}_{subset}_nan{int(nan_pct * 10)}_np{num_past}_nf{num_fut}_s{seed}"
+        experiment_id = f"{dataset}_{subset}_nan{int(nan_pct * 10)}_np{num_past}_nf{num_fut}"
         data_obj = ists_utils.get_pretrain_data(None, dataset, subset, nan_pct, num_past, num_fut, abl_code, args)
     else:
         experiment_id = int(SystemRandom().random()*100000)

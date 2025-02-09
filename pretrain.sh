@@ -1,3 +1,3 @@
-python3 pretrain.py --niters 2 --lr 0.0001 --batch-size 128 --rec-hidden 128 --n 8000 --quantization 0.016 \
---save 1 --classif --num-heads 1 --learn-emb --dataset physionet --seed 0 --add_pos --transformer \
---pooling bert --pretrain_tasks full2 --segment_num 3 --mask_ratio_per_seg 0.05 --dev 0
+conda run --name prime_net_env --no-capture-output python3 -u pretrain.py \
+ --dataset french --nan-pct 0.5 --num-past 48 --num-fut 30 --abl-code E --niters 100 \
+ --batch-size 64 --seed 42 --add_pos --transformer --lr 0.0001 --dev

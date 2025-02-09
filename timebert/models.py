@@ -203,8 +203,7 @@ class TimeBERT(nn.Module):
     def time_embedding(self, pos, d_model):
         pe = torch.zeros(pos.shape[0], pos.shape[1], d_model)
         position = 48.*pos.unsqueeze(2)
-        div_term = torch.exp(torch.arange(0, d_model, 2) *
-                             -(torch.log(self.freq) / d_model))
+        div_term = torch.exp(torch.arange(0, d_model, 2) * -(torch.log(torch.tensor(self.freq)) / d_model))
         pe[:, :, 0::2] = torch.sin(position * div_term)
         pe[:, :, 1::2] = torch.cos(position * div_term)
         return pe
@@ -659,24 +658,25 @@ class TimeBERTForRegression(nn.Module):
             self.regressor = nn.Sequential(
                                 nn.Linear(config.hidden_size, 512),
                                 nn.ReLU(),
-
                                 nn.Linear(512, 1))
 
         elif self.config.dataset == 'BC':
             self.regressor = nn.Sequential(
                                 nn.Linear(config.hidden_size, 32768),
                                 nn.ReLU(),
-
                                 nn.Linear(32768, 1))
 
         elif self.config.dataset in ['french', 'ushcn']:
             self.regressor = nn.Sequential(
-                                nn.Linear(config.hidden_size, 300),
+                                nn.Linear(config.hidden_size, 512),
                                 nn.ReLU(),
-                                nn.Linear(300, 300),
-                                nn.ReLU(),
-                                nn.Linear(300, 1))
+                                nn.Linear(512, 1))
 
+        elif self.config.dataset in ["adbpo"]:
+            self.regressor = nn.Sequential(
+                                nn.Linear(config.hidden_size, 256),
+                                nn.ReLU(),
+                                nn.Linear(256, 1))
 
     def forward(self, x, time_steps):
 

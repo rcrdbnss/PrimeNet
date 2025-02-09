@@ -21,7 +21,7 @@ from timebert import TimeBERTForClassification, TimeBERTForRegression, TimeBERTF
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--niters', type=int, default=2000, help='Maximum number of iterations to run.')
-parser.add_argument('--lr', type=float, default=0.01, help='Learning Rate.')
+parser.add_argument('--lr', type=float, default=0.0001, help='Learning Rate.')
 parser.add_argument('--rec-hidden', type=int, default=32, help='Model Hidden Size for Dense Layers.')
 parser.add_argument('--embed-time', type=int, default=128, help='Size of Time Embedding Layer.')
 parser.add_argument('--save', type=int, default=0, help='Non-zero: Save the finetuned model. Zero: Do not save the finetuned model.')
@@ -61,7 +61,8 @@ args = parser.parse_args()
 
 if __name__ == '__main__':
     if args.dev:
-        args.niters = 2
+        args.niters = 3
+        args.patience = 1
         args.batch_size = 25
     # args.path = './data/finetune/'
     all_mse_loss, all_mae_loss, best_mse_epochs = [], [], []
@@ -85,7 +86,7 @@ if __name__ == '__main__':
         abl_code = args.abl_code
         if args.dev:
             subset = f'{subset}_dev'
-        experiment_id = f"{dataset}_{subset}_nan{int(nan_pct * 10)}_np{num_past}_nf{num_fut}_s{seed}"
+        experiment_id = f"{dataset}_{subset}_nan{int(nan_pct * 10)}_np{num_past}_nf{num_fut}"
         data_obj, D = ists_utils.get_finetune_data(None, dataset, subset, nan_pct, num_past, num_fut, abl_code, args)
         if args.pretrain_model is not None:
             args.pretrain_model = experiment_id
@@ -129,7 +130,6 @@ if __name__ == '__main__':
         print('Load successfully.')
     else:
         print('Model training from scratch')
-        experiment_id += '_scratch'
 
     params = (list(model.parameters()))
     print('parameters:', utils.count_parameters(model))
@@ -147,12 +147,12 @@ if __name__ == '__main__':
         print('loading saved weights', checkpoint['epoch'])
 
     best_val_loss = float('inf')
-    total_time = 0.
     best_mse_loss = float('inf')
     best_mae_loss = float('inf')
     best_mse_epoch = 0
     results = []
     patience = args.patience
+    epoch_times = []
 
     best_acc = 0.
     best_auc = 0.
@@ -203,7 +203,8 @@ if __name__ == '__main__':
             elif args.task == 'interpolation':
                 train_loss += loss.item() * num_values
                 total_values += num_values
-        total_time += time.time() - start_time
+        epoch_time = time.time() - start_time
+        epoch_times.append(epoch_time)
 
         if args.task == 'classification':
             val_loss, val_acc, val_auc = utils.evaluate_classifier(model, val_loader, args=args, dim=dim)
@@ -348,7 +349,8 @@ if __name__ == '__main__':
         results_df[f'{abl_code}' + '#scratch' if args.pretrain_model is None else ''] = {
             'test_mae': mae_test, 'test_mse': mse_test,
             'train_mae': mae_train, 'train_mse': mse_train,
-            'val_loss': results[:, 1].tolist(), 'test_loss': results[:, 3].tolist()
+            'val_loss': results[:, 1].tolist(), 'test_loss': results[:, 3].tolist(),
+            "epoch_times": epoch_times,
         }
         results_df = pd.DataFrame.from_dict(results_df, orient='index')
         results_df.index.name = experiment_id

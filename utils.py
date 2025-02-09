@@ -183,10 +183,9 @@ def evaluate_classifier(model, test_loader, dec=None, args=None, classifier=None
 def predict_regressor(model, test_loader, device, dim=0):
     pred, true = [], []
     for test_batch, label in test_loader:
-        label = label.squeeze()
+        label = label.squeeze(-1)
         test_batch, label = test_batch.to(device), label.to(device)
-        observed_data, observed_mask, observed_tp = test_batch[:, :, :dim], test_batch[:, :, dim:2 * dim], test_batch[:,
-                                                                                                           :, -1]
+        observed_data, observed_mask, observed_tp = test_batch[:, :, :dim], test_batch[:, :, dim:2 * dim], test_batch[:, :, -1]
         with torch.no_grad():
             out = model(torch.cat((observed_data, observed_mask), 2), observed_tp)
         pred.append(out.cpu().numpy())
@@ -201,7 +200,7 @@ def evaluate_regressor(model, test_loader, dec=None, args=None, classifier=None,
     test_mse_loss = 0
     test_mae_loss = 0
     for test_batch, label in test_loader:
-        label = label.squeeze()
+        label = label.squeeze(-1)
         test_batch, label = test_batch.to(args.device), label.to(args.device)
         observed_data, observed_mask, observed_tp = test_batch[:, :, :dim], test_batch[:, :, dim:2 * dim], test_batch[:, :, -1]
         with torch.no_grad():
